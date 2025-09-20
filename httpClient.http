@@ -1,0 +1,37 @@
+http://localhost:3000
+
+###
+
+http://localhost:3001/lotto
+
+###
+
+POST http://localhost:3001/users
+Content-Type: application/json
+
+{
+  "id":4,
+  "name":"santa"
+}
+###
+
+PUT http://localhost:3000/1
+Content-Type: application/json
+
+{
+  "name":"Isara"
+}
+
+###
+
+DELETE http://localhost:3000/1
+
+###
+POST http://localhost:3000/register
+Content-Type: application/json
+
+Body:
+{
+  "login_tel": "user@example.com",
+  "password": "123456"
+}

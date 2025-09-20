@@ -1,0 +1,22 @@
+[
+  {
+    "type": "first",
+    "number": "640371"
+  },
+  {
+    "type": "second",
+    "number": "020244"
+  },
+  {
+    "type": "third",
+    "number": "293368"
+  },
+  {
+    "type": "lastTwoDigits",
+    "number": "13"
+  },
+  {
+    "type": "lastThreeDigits",
+    "number": "371"
+  }
+]
