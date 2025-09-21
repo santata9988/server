@@ -9,26 +9,10 @@
   },
   {
     "id": 2,
-    "name": "Santa",
+    "name": "as",
     "login_tel": "0989841487",
     "password": "aa",
     "role": "member",
-    "wallet": 0
-  },
-  {
-    "id": 3,
-    "name": "Santa",
-    "login_tel": "0960200342",
-    "password": "1111",
-    "role": "member",
-    "wallet": 2000
-  },
-  {
-    "id": 4,
-    "name": "as",
-    "login_tel": "0000000000",
-    "password": "11",
-    "role": "member",
-    "wallet": 1000
+    "wallet": 40
   }
 ]
