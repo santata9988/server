@@ -237,6 +237,27 @@ app.post("/reset-password", (req, res) => {
     res.json({ success: true, message: "เปลี่ยนรหัสผ่านสำเร็จ" });
   });
 });
+// ตรวจสอบว่ามี middleware auth ด้วยนะ
+app.get("/results", auth, (req, res) => {
+  const sql = "SELECT type, number, reward FROM winners ORDER BY id DESC";
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("❌ winners query error:", err.message);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    const formatted = {};
+    results.forEach(r => {
+      formatted[r.type] = {
+        number: r.number,
+        reward: r.reward
+      };
+    });
+
+    res.json(formatted);
+  });
+});
 
 // ดึงข้อมูล users ทั้งหมด
 app.get("/users", (req, res) => {
@@ -259,6 +280,16 @@ app.get("/wallet/:id", (req, res) => {
 app.get("/lotto", (req, res) => {
   db.query("SELECT * FROM lotto_tickets WHERE isSold = FALSE", (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
+    res.json(results);
+  });
+});
+// 📌 ดึงล็อตเตอรี่ทั้งหมด (ขายแล้ว/ยังไม่ขายก็เอามา)
+app.get("/lottos", (req, res) => {
+  db.query("SELECT * FROM lotto_tickets", (err, results) => {
+    if (err) {
+      console.error("❌ lotto error:", err.message);
+      return res.status(500).json({ error: "Database error" });
+    }
     res.json(results);
   });
 });
@@ -364,14 +395,13 @@ app.post('/winners/save', auth, isOwner, (req, res) => {
     winners.push({ type: "lastThreeDigits", number: last3 });
   }
 
-  // 🟦 เพิ่มเลขท้าย 2 ตัว (ถ้ามี)
-  let last2 = null;
+  // 🟦 เพิ่มเลขท้าย 2 ตัว
   if (lastTwoDigits !== undefined && lastTwoDigits !== null) {
-    last2 = String(lastTwoDigits).padStart(2, "0");
+    const last2 = String(lastTwoDigits).padStart(2, "0");
     winners.push({ type: "lastTwoDigits", number: last2 });
   }
 
-  // เตรียม values สำหรับบันทึก
+  // เตรียม values สำหรับบันทึก winners
   const values = winners.map(w => [
     w.type,
     w.number,
@@ -381,23 +411,19 @@ app.post('/winners/save', auth, isOwner, (req, res) => {
   db.beginTransaction(err => {
     if (err) return res.status(500).json({ error: "Transaction start failed" });
 
-    // 1. ล้าง winners เก่า
     db.query("TRUNCATE TABLE winners", err => {
       if (err) return db.rollback(() => res.status(500).json({ error: "Clear winners failed" }));
 
-      // 2. Insert winners ใหม่
       const sql = "INSERT INTO winners (type, number, reward) VALUES ?";
       db.query(sql, [values], (err, result) => {
         if (err) return db.rollback(() => res.status(500).json({ error: "Insert winners failed" }));
 
-        // 3. Reset prizeType ทั้งหมด
         db.query("UPDATE lotto_tickets SET prizeType = 'none'", err => {
           if (err) return db.rollback(() => res.status(500).json({ error: "Reset lotto failed" }));
 
-          // 4. อัปเดตตามแต่ละรางวัล
           let updates = [];
 
-          // รางวัลที่ 1–5 → ตรงเลขเต็ม
+          // รางวัลที่ 1–5 (เลขเต็มตรง)
           ["first","second","third","fourth","fifth"].forEach(type => {
             const prize = winners.find(w => w.type === type);
             if (prize) {
@@ -414,27 +440,34 @@ app.post('/winners/save', auth, isOwner, (req, res) => {
           // เลขท้าย 3 ตัว
           const last3 = winners.find(w => w.type === "lastThreeDigits");
           if (last3) {
-            updates.push(new Promise((resolve,reject)=>{
+            updates.push(new Promise((resolve, reject) => {
               db.query(
-                "UPDATE lotto_tickets SET prizeType = 'lastThreeDigits' WHERE RIGHT(number,3) = ?",
+                `UPDATE lotto_tickets 
+                 SET prizeType = 'lastThreeDigits' 
+                 WHERE prizeType = 'none'
+                   AND RIGHT(LPAD(CAST(number AS CHAR),6,'0'),3) = ?`,
                 [last3.number],
                 (err, result) => err ? reject(err) : resolve(result.affectedRows)
               );
             }));
           }
 
-          // เลขท้าย 2 ตัว
+          // เลขท้าย 2 ตัว ✅ ใช้ LPAD เหมือนที่คุณทดสอบ
+          const last2 = winners.find(w => w.type === "lastTwoDigits");
           if (last2) {
-            updates.push(new Promise((resolve,reject)=>{
+            const last2num = String(last2.number).padStart(2, "0");
+            updates.push(new Promise((resolve, reject) => {
               db.query(
-                "UPDATE lotto_tickets SET prizeType = 'lastTwoDigits' WHERE RIGHT(number,2) = ?",
-                [last2],
+                `UPDATE lotto_tickets 
+                 SET prizeType = 'lastTwoDigits' 
+                 WHERE prizeType = 'none'
+                   AND RIGHT(LPAD(CAST(number AS CHAR),6,'0'),2) = ?`,
+                [last2num],
                 (err, result) => err ? reject(err) : resolve(result.affectedRows)
               );
             }));
           }
 
-          // รันทั้งหมด
           Promise.all(updates)
             .then(rows => {
               db.commit(err => {
@@ -535,7 +568,70 @@ app.get("/winners", auth, (req, res) => {
   });
 });
 
+// ✅ API ขึ้นเงิน
+// 📌 Claim ticket
+// POST /tickets/:id/claim
+app.post("/tickets/:id/claim", auth, (req, res) => {
+  const ticketId = parseInt(req.params.id);
+  const userId = req.user.id;
 
+  // 1. ดึง ticket มาตรวจสอบ
+  db.query(
+    "SELECT * FROM lotto_tickets WHERE id = ? AND buyerId = ?",
+    [ticketId, userId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: "DB error" });
+      if (rows.length === 0) return res.status(404).json({ error: "ไม่พบตั๋ว" });
+
+      const ticket = rows[0];
+      if (ticket.claimed) {
+        return res.status(400).json({ error: "ตั๋วนี้ขึ้นเงินแล้ว" });
+      }
+      if (!ticket.prizeType || ticket.prizeType === "none") {
+        return res.status(400).json({ error: "ตั๋วนี้ไม่ถูกรางวัล" });
+      }
+
+      // 2. ดึงรางวัลจากตาราง winners
+      db.query(
+        "SELECT reward FROM winners WHERE type = ? LIMIT 1",
+        [ticket.prizeType],
+        (err, winRows) => {
+          if (err) return res.status(500).json({ error: "DB error" });
+          if (winRows.length === 0) return res.status(400).json({ error: "ไม่พบรางวัล" });
+
+          const reward = winRows[0].reward;
+
+          // 3. อัปเดตตั๋วว่าขึ้นเงินแล้ว และเพิ่มเงินให้ user
+          db.beginTransaction(err => {
+            if (err) return res.status(500).json({ error: "Transaction error" });
+
+            db.query(
+              "UPDATE lotto_tickets SET claimed = 1 WHERE id = ?",
+              [ticketId],
+              err => {
+                if (err) return db.rollback(() => res.status(500).json({ error: "Update failed" }));
+
+                db.query(
+                  "UPDATE users SET wallet = wallet + ? WHERE id = ?",
+                  [reward, userId],
+                  err => {
+                    if (err) return db.rollback(() => res.status(500).json({ error: "Balance update failed" }));
+
+                    db.commit(err => {
+                      if (err) return db.rollback(() => res.status(500).json({ error: "Commit failed" }));
+
+                      res.json({ message: "ขึ้นเงินสำเร็จ", reward });
+                    });
+                  }
+                );
+              }
+            );
+          });
+        }
+      );
+    }
+  );
+});
 
 
 // รีเซ็ตข้อมูลลอตเตอรี่
